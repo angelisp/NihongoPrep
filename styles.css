@@ -112,6 +112,10 @@ button {
   cursor: pointer;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .jp-text {
   font-family: var(--font-jp);
 }
