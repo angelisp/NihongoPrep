@@ -66,12 +66,18 @@ window.NihongoApp = (function () {
     if (mf) mf.checked = prefs.showFurigana;
     if (mr) mr.checked = prefs.showRomaji;
     if (ma) ma.checked = prefs.autoPlayAudio;
+    const mg = document.getElementById('modal-daily-goal');
+    if (mg) mg.value = String(prefs.dailyGoalXp);
   }
 
   function updateSidebarStats() {
     const store = window.NihongoStore;
+    const fx = window.NihongoFx;
     const state = store.getState();
     const readiness = store.getReadiness();
+    const level = store.getLevelInfo();
+    const daily = store.getDailyProgress();
+    const streak = store.getEffectiveStreak();
     const { dueReview } = store.getDueVocabIds();
 
     const pctEl = document.getElementById('sidebar-readiness-pct');
@@ -79,11 +85,20 @@ window.NihongoApp = (function () {
     const streakEl = document.getElementById('sidebar-streak');
     const xpEl = document.getElementById('sidebar-xp');
     const badgeEl = document.getElementById('nav-due-badge');
+    const mistakeBadgeEl = document.getElementById('nav-mistake-badge');
+    const mistakeCount = store.getMistakeCount();
 
     if (pctEl) pctEl.textContent = `${readiness.overall}%`;
     if (barEl) barEl.style.width = `${readiness.overall}%`;
-    if (streakEl) streakEl.textContent = `🔥 ${state.stats.streak} day streak`;
-    if (xpEl) xpEl.textContent = `${state.stats.xp} XP`;
+    if (streakEl) streakEl.textContent = `🔥 ${streak} day streak`;
+    if (xpEl) {
+      const prevXp = sidebarPrev.xp;
+      if (prevXp !== null && prevXp !== state.stats.xp) {
+        fx.countUp(xpEl, state.stats.xp, { from: prevXp, suffix: ' XP', duration: 700 });
+      } else {
+        xpEl.textContent = `${state.stats.xp.toLocaleString()} XP`;
+      }
+    }
     if (badgeEl) {
       if (dueReview.length > 0) {
         badgeEl.textContent = String(dueReview.length);
@@ -92,18 +107,100 @@ window.NihongoApp = (function () {
         badgeEl.hidden = true;
       }
     }
+    if (mistakeBadgeEl) {
+      if (mistakeCount > 0) {
+        mistakeBadgeEl.textContent = String(mistakeCount);
+        mistakeBadgeEl.hidden = false;
+      } else {
+        mistakeBadgeEl.hidden = true;
+      }
+    }
+
+    // Level card
+    const levelNum = document.getElementById('sidebar-level-num');
+    const rankEl = document.getElementById('sidebar-rank');
+    const nextEl = document.getElementById('sidebar-level-next');
+    const levelBar = document.getElementById('sidebar-level-bar');
+    if (levelNum) levelNum.textContent = String(level.level);
+    if (rankEl) rankEl.textContent = `${level.rank.jp} · ${level.rank.en}`;
+    if (nextEl) nextEl.textContent = `${level.toNext} XP to Lv ${level.level + 1}`;
+    if (levelBar) {
+      // When the level changes, restart the bar from 0 instead of shrinking backwards.
+      if (sidebarPrev.level !== null && level.level > sidebarPrev.level) {
+        levelBar.style.transition = 'none';
+        levelBar.style.width = '0%';
+        void levelBar.offsetWidth;
+        levelBar.style.transition = '';
+      }
+      levelBar.style.width = `${level.progressPct}%`;
+    }
+
+    // Daily goal rings
+    const ring = document.getElementById('sidebar-goal-ring');
+    const ringText = document.getElementById('sidebar-goal-text');
+    const caption = document.getElementById('sidebar-goal-caption');
+    const mobileRing = document.getElementById('mobile-goal-ring');
+    const mobileLevel = document.getElementById('mobile-level-num');
+    [ring, mobileRing].forEach(r => {
+      if (!r) return;
+      r.style.setProperty('--pct', daily.pct);
+      r.classList.toggle('done', daily.done);
+      r.title = `Daily goal: ${daily.xp}/${daily.goal} XP`;
+    });
+    if (ringText) ringText.textContent = daily.done ? '✓' : `${daily.pct}%`;
+    if (caption) {
+      caption.textContent = daily.done
+        ? `🎯 Goal met · ${daily.xp} XP today`
+        : `🎯 ${daily.xp} / ${daily.goal} XP today`;
+    }
+    if (mobileLevel) mobileLevel.textContent = String(level.level);
+
+    sidebarPrev = { xp: state.stats.xp, level: level.level };
+  }
+
+  let sidebarPrev = { xp: null, level: null };
+
+  function initProgressionEffects() {
+    const store = window.NihongoStore;
+    const fx = window.NihongoFx;
+
+    store.on('xp', e => {
+      fx.floatXp(e.amount);
+      fx.pulse(document.getElementById('sidebar-level-card'));
+      fx.pulse(document.getElementById('mobile-level-chip'));
+    });
+
+    store.on('levelUp', e => {
+      setTimeout(() => fx.celebrateLevelUp(e), 450);
+    });
+
+    store.on('goalComplete', e => {
+      toast(`🎯 Daily goal reached! ${e.goal} XP — 今日もよく頑張りました！`);
+      const ring = document.getElementById('sidebar-goal-ring');
+      const mobileRing = document.getElementById('mobile-goal-ring');
+      fx.pulse(ring, 'fx-pop');
+      fx.pulse(mobileRing, 'fx-pop');
+      fx.confettiFrom(ring && ring.getBoundingClientRect().width ? ring : mobileRing, { count: 60, spread: 0.7 });
+    });
+
+    store.on('streak', e => {
+      toast(`🔥 ${e.days}-day streak! Keep it going.`);
+    });
+
+    store.on('mastered', e => {
+      const word = (window.NihongoData.vocab || []).find(w => w.id === e.vocabId);
+      if (word) toast(`✨ Mastered「${word.kanji}」— ${word.meaning}`);
+    });
+
+    store.on('questComplete', e => {
+      toast(`🏆 Quest complete: ${e.quest.title} (+${e.quest.rewardXp} XP)`);
+      fx.confetti({ count: 70, spread: 0.85 });
+    });
   }
 
   function cleanupCurrentView() {
-    if (currentRoute === 'vocab' && window.NihongoViews.vocab.cleanup) {
-      window.NihongoViews.vocab.cleanup();
-    }
-    if (currentRoute === 'listening' && window.NihongoViews.listening.cleanup) {
-      window.NihongoViews.listening.cleanup();
-    }
-    if (currentRoute === 'exam' && window.NihongoViews.exam.cleanup) {
-      window.NihongoViews.exam.cleanup();
-    }
+    const mod = window.NihongoViews[currentRoute];
+    if (mod && typeof mod.cleanup === 'function') mod.cleanup();
   }
 
   function navigate(route, opts) {
@@ -130,6 +227,7 @@ window.NihongoApp = (function () {
     }
 
     window.scrollTo({ top: 0, behavior: 'instant' });
+    window.NihongoFx.animateIn(viewEl);
     updateSidebarStats();
   }
 
@@ -196,6 +294,13 @@ window.NihongoApp = (function () {
       applyPreferences();
     });
 
+    document.getElementById('modal-daily-goal').addEventListener('change', e => {
+      store.updatePref('dailyGoalXp', Number(e.target.value));
+      applyPreferences();
+      if (currentRoute === 'dashboard') navigate('dashboard');
+      toast(`Daily goal set to ${e.target.value} XP 🎯`);
+    });
+
     document.getElementById('test-tts-btn').addEventListener('click', () => {
       window.NihongoAudio.speak('こんにちは。日本語能力試験N5の勉強を頑張りましょう！');
     });
@@ -243,6 +348,7 @@ window.NihongoApp = (function () {
       updateSidebarStats();
     });
 
+    initProgressionEffects();
     initPwa();
   }
 

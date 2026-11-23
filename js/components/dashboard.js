@@ -7,14 +7,27 @@ window.NihongoViews.dashboard = function (container) {
   const store = window.NihongoStore;
   const state = store.getState();
   const readiness = store.getReadiness();
+  const level = store.getLevelInfo();
+  const daily = store.getDailyProgress();
+  const streak = store.getEffectiveStreak();
   const { dueReview, fresh } = store.getDueVocabIds();
+  const nextUp = store.getNextUp();
+  const quests = store.getDailyQuests();
+  const mistakeCount = store.getMistakeCount();
+  const history14 = store.getActivityHistory(14);
+  const activeDays14 = history14.filter(d => d.xp > 0).length;
+  const completedQuests = quests.filter(q => q.completed).length;
 
-  // Deterministic "of the day" spotlight
+  // Deterministic "of the day" spotlight, preferring unmastered/unstudied items
   const daySeed = Math.floor(Date.now() / 86400000);
   const vocabList = window.NihongoData.vocab;
   const grammarList = window.NihongoData.grammar;
-  const spotlightWord = vocabList[daySeed % vocabList.length];
-  const spotlightGrammar = grammarList[daySeed % grammarList.length];
+  const unmasteredVocab = vocabList.filter(w => store.getVocabStatus(w.id) !== 'mastered');
+  const vocabPool = unmasteredVocab.length ? unmasteredVocab : vocabList;
+  const unstudiedGrammar = grammarList.filter(g => !state.studiedGrammar.includes(g.id));
+  const grammarPool = unstudiedGrammar.length ? unstudiedGrammar : grammarList;
+  const spotlightWord = vocabPool[daySeed % vocabPool.length];
+  const spotlightGrammar = grammarPool[daySeed % grammarPool.length];
 
   const posLabelMap = {
     noun: 'Noun · 名詞',
@@ -27,38 +40,138 @@ window.NihongoViews.dashboard = function (container) {
   container.innerHTML = `
     <section class="hero-banner">
       <div>
-        <span class="hero-eyebrow">JLPT N5 REVISION STUDIO · 日本語能力試験 N5</span>
-        <h2>Keep building your N5 fluency.</h2>
-        <p>
-          Revise vocabulary with spaced-repetition flashcards, master core N5 grammar patterns and particles,
-          and test yourself under authentic JLPT exam conditions.
-        </p>
+        <span class="hero-eyebrow">NEXT UP · ${nextUp.eyebrow}</span>
+        <h2>${nextUp.title}</h2>
+        <p>${nextUp.reason}</p>
         <div class="btn-row">
-          <button class="btn btn-primary" data-goto="vocab" data-sub="flashcards">
-            🃏 Study Flashcards ${dueReview.length > 0 ? `(${dueReview.length} due)` : ''}
+          <button class="btn btn-primary"
+                  data-goto="${nextUp.route}"
+                  ${nextUp.opts && nextUp.opts.subTab ? `data-sub="${nextUp.opts.subTab}"` : ''}
+                  ${nextUp.opts && nextUp.opts.drillType ? `data-drill-type="${nextUp.opts.drillType}"` : ''}>
+            ${nextUp.cta}
           </button>
-          <button class="btn btn-secondary" data-goto="exam">
-            📝 Take N5 Mock Exam
-          </button>
+          ${mistakeCount > 0 && !(nextUp.opts && nextUp.opts.drillType === 'mistakes') ? `
+            <button class="btn btn-secondary" data-goto="drills" data-drill-type="mistakes">
+              🎯 Fix Mistakes (${mistakeCount})
+            </button>
+          ` : `
+            <button class="btn btn-secondary" data-goto="exam">
+              📝 Take N5 Mock Exam
+            </button>
+          `}
         </div>
       </div>
 
       <div class="hero-stats">
+        <div class="hero-stat-box hero-level-box">
+          <div class="hero-stat-value">Lv <span data-countup="${level.level}">${level.level}</span></div>
+          <div class="hero-stat-label"><span class="jp-text">${level.rank.jp}</span> · ${level.rank.en}</div>
+          <div class="progress-track hero-track">
+            <div class="progress-fill" style="width: ${level.progressPct}%"></div>
+          </div>
+          <div class="hero-stat-label">${level.toNext} XP to Lv ${level.level + 1}</div>
+        </div>
+        <div class="hero-stat-box hero-goal-box">
+          <div class="goal-ring lg ${daily.done ? 'done' : ''}" data-pct="${daily.pct}" style="--pct: ${daily.pct}">
+            <span>${daily.done ? '✓' : `${daily.pct}%`}</span>
+          </div>
+          <div>
+            <div class="hero-stat-value hero-goal-value"><span data-countup="${daily.xp}">${daily.xp}</span>/${daily.goal}</div>
+            <div class="hero-stat-label">${daily.done ? 'Daily goal complete 🎯' : 'XP toward today’s goal'}</div>
+          </div>
+        </div>
         <div class="hero-stat-box">
-          <div class="hero-stat-value">${readiness.overall}%</div>
+          <div class="hero-stat-value"><span data-countup="${readiness.overall}" data-suffix="%">${readiness.overall}%</span></div>
           <div class="hero-stat-label">Overall N5 Readiness</div>
         </div>
         <div class="hero-stat-box">
-          <div class="hero-stat-value">🔥 ${state.stats.streak}</div>
-          <div class="hero-stat-label">Day Study Streak</div>
+          <div class="hero-stat-value">🔥 <span data-countup="${streak}">${streak}</span></div>
+          <div class="hero-stat-label">Day Study Streak · <span data-countup="${state.stats.xp}">${state.stats.xp}</span> XP total</div>
         </div>
-        <div class="hero-stat-box">
-          <div class="hero-stat-value">${readiness.vocabTouched}/${readiness.vocabTotal}</div>
-          <div class="hero-stat-label">Vocab Reviewed</div>
+      </div>
+    </section>
+
+    <!-- Daily Quests & 14-Day Study Activity -->
+    <section class="dashboard-grid">
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px;">
+          <div>
+            <h2 style="font-size:1.12rem; margin:0;">Today’s Quests · 今日のクエスト</h2>
+            <p class="muted small" style="margin:2px 0 0;">Tailored daily goals based on your weakest areas.</p>
+          </div>
+          <span class="badge ${completedQuests === quests.length ? 'badge-success' : 'badge-neutral'}">
+            ${completedQuests}/${quests.length} Done
+          </span>
         </div>
-        <div class="hero-stat-box">
-          <div class="hero-stat-value">${state.stats.xp} XP</div>
-          <div class="hero-stat-label">Total Study XP</div>
+
+        <div class="quest-list">
+          ${quests.map(q => {
+            const qPct = Math.round((q.progress / q.target) * 100);
+            return `
+              <div class="quest-item ${q.completed ? 'completed' : ''}">
+                <div class="quest-top">
+                  <div class="quest-title">
+                    <span class="quest-check">${q.completed ? '✓' : '○'}</span>
+                    <span>${q.title}</span>
+                  </div>
+                  <div style="display:flex; align-items:center; gap:6px; flex-shrink:0;">
+                    <span class="badge ${q.completed ? 'badge-success' : 'badge-warning'}">+${q.rewardXp} XP</span>
+                    ${!q.completed ? `
+                      <button class="btn btn-xs btn-ghost"
+                              data-goto="${q.route}"
+                              ${q.opts && q.opts.subTab ? `data-sub="${q.opts.subTab}"` : ''}
+                              ${q.opts && q.opts.drillType ? `data-drill-type="${q.opts.drillType}"` : ''}>
+                        Go →
+                      </button>
+                    ` : ''}
+                  </div>
+                </div>
+                <div class="quest-progress-row">
+                  <div class="progress-track" style="flex:1; height:6px;">
+                    <div class="progress-fill ${q.completed ? 'success' : ''}" style="width:${qPct}%"></div>
+                  </div>
+                  <span class="muted small">${q.progress}/${q.target}</span>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      <div class="card" style="display:flex; flex-direction:column; justify-content:space-between; gap:14px;">
+        <div>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px;">
+            <div>
+              <h2 style="font-size:1.12rem; margin:0;">14-Day Activity · 学習記録</h2>
+              <p class="muted small" style="margin:2px 0 0;">Active ${activeDays14} of the last 14 days</p>
+            </div>
+            <span class="badge badge-neutral">Goal: ${daily.goal} XP/day</span>
+          </div>
+
+          <div class="heatmap-grid" role="list" aria-label="14-day study activity">
+            ${history14.map(day => `
+              <div class="heatmap-cell lv-${day.level} ${day.isToday ? 'is-today' : ''}"
+                   role="listitem"
+                   title="${day.label}: ${day.xp} XP${day.goalMet ? ' (Goal met ✓)' : ''}">
+                <span class="heatmap-day">${day.shortDay}</span>
+              </div>
+            `).join('')}
+          </div>
+          <div class="heatmap-legend small muted">
+            <span>Less</span>
+            <i class="lv-0"></i><i class="lv-1"></i><i class="lv-2"></i><i class="lv-3"></i><i class="lv-4"></i>
+            <span>More</span>
+          </div>
+        </div>
+
+        <div class="mistake-mini-bar ${mistakeCount > 0 ? 'has-items' : ''}">
+          <div>
+            <strong>${mistakeCount > 0 ? `🎯 ${mistakeCount} weak item${mistakeCount === 1 ? '' : 's'} in Mistake Bank` : '✨ Mistake Bank is clear'}</strong>
+            <div class="small muted">
+              ${mistakeCount > 0 ? 'Review missed drill, grammar & exam questions.' : 'Missed quiz questions will appear here for targeted practice.'}
+            </div>
+          </div>
+          ${mistakeCount > 0 ? `<button class="btn btn-xs btn-primary" data-goto="drills" data-drill-type="mistakes">Fix →</button>` : ''}
         </div>
       </div>
     </section>
@@ -225,15 +338,21 @@ window.NihongoViews.dashboard = function (container) {
           <button class="btn btn-secondary btn-sm" data-goto="exam">View Exam Hall</button>
         </div>
         <div style="display:grid; gap:8px;">
-          ${state.examHistory.slice(0, 4).map(h => {
+          ${state.examHistory.slice(0, 4).map((h, i) => {
             const pct = Math.round((h.score / h.total) * 100);
+            const prev = state.examHistory[i + 1];
+            const delta = prev ? pct - Math.round((prev.score / prev.total) * 100) : null;
+            const deltaBadge = delta !== null && delta !== 0
+              ? `<span class="badge ${delta > 0 ? 'badge-success' : 'badge-danger'}">${delta > 0 ? `↑ +${delta}%` : `↓ ${delta}%`}</span>`
+              : '';
             return `
               <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; background:var(--bg-subtle); border-radius:8px; flex-wrap:wrap; gap:8px;">
                 <div>
                   <strong>${h.mode}</strong>
                   <span class="muted small" style="margin-left:8px;">${h.date}</span>
                 </div>
-                <div style="display:flex; align-items:center; gap:10px;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                  ${deltaBadge}
                   <strong>${h.score}/${h.total} (${pct}%)</strong>
                   <span class="badge ${h.passed ? 'badge-success' : 'badge-warning'}">${h.passed ? 'PASS' : 'KEEP STUDYING'}</span>
                 </div>
@@ -252,6 +371,7 @@ window.NihongoViews.dashboard = function (container) {
       const opts = {};
       if (el.dataset.sub) opts.subTab = el.dataset.sub;
       if (el.dataset.grammarId) opts.grammarId = el.dataset.grammarId;
+      if (el.dataset.drillType) opts.drillType = el.dataset.drillType;
       window.NihongoApp.navigate(route, opts);
     });
   });

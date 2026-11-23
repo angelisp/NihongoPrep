@@ -88,12 +88,16 @@ window.NihongoViews.exam = (function () {
     };
 
     let totalCorrect = 0;
+    const store = window.NihongoStore;
     session.questions.forEach((q, idx) => {
       const sec = sectionStats[q.section];
       sec.total += 1;
       if (session.answers[idx] === q.answerIndex) {
         totalCorrect += 1;
         sec.correct += 1;
+        store.clearMistake(`exam:${q.id}`);
+      } else {
+        store.recordMistake('exam', q.id, `Exam · ${q.sectionLabel}`);
       }
     });
 
@@ -113,7 +117,7 @@ window.NihongoViews.exam = (function () {
       sections: sectionStats
     };
 
-    window.NihongoStore.recordExamResult({
+    const xpEarned = window.NihongoStore.recordExamResult({
       date: today,
       mode: session.mode,
       score: totalCorrect,
@@ -125,6 +129,8 @@ window.NihongoViews.exam = (function () {
         reading: `${sectionStats.reading.correct}/${sectionStats.reading.total}`
       }
     });
+    session.result.xpEarned = xpEarned;
+    session.result.celebrated = false;
 
     render(container);
   }
@@ -150,7 +156,9 @@ window.NihongoViews.exam = (function () {
   }
 
   function renderLobby(container) {
-    const history = window.NihongoStore.getState().examHistory;
+    const store = window.NihongoStore;
+    const history = store.getState().examHistory;
+    const readiness = store.getReadiness();
 
     container.innerHTML = `
       <div class="section-header">
@@ -159,6 +167,12 @@ window.NihongoViews.exam = (function () {
           <p>Simulate real JLPT N5 test structure across Kanji/Vocabulary, Grammar (including ★ Sentence Ordering), and Reading Passages.</p>
         </div>
       </div>
+
+      ${readiness.overall < 45 ? `
+        <div class="card readiness-nudge" style="margin-bottom:18px;">
+          <strong>💡 Readiness is ${readiness.overall}%</strong> — You’re welcome to try the full exam anytime, or start with the <strong>13-question Mini-Mock</strong> for a quick baseline.
+        </div>
+      ` : ''}
 
       <div class="dashboard-grid">
         <div class="card">
@@ -209,8 +223,13 @@ window.NihongoViews.exam = (function () {
         <div class="card">
           <h3 style="margin:0 0 12px; font-size:1.05rem;">Past Mock Exam History</h3>
           <div style="display:grid; gap:8px;">
-            ${history.map(h => {
+            ${history.map((h, i) => {
               const pct = Math.round((h.score / h.total) * 100);
+              const prev = history[i + 1];
+              const delta = prev ? pct - Math.round((prev.score / prev.total) * 100) : null;
+              const deltaBadge = delta !== null && delta !== 0
+                ? `<span class="badge ${delta > 0 ? 'badge-success' : 'badge-danger'}">${delta > 0 ? `↑ +${delta}%` : `↓ ${delta}%`}</span>`
+                : '';
               return `
                 <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; padding:10px 12px; background:var(--bg-subtle); border-radius:8px;">
                   <div>
@@ -218,7 +237,8 @@ window.NihongoViews.exam = (function () {
                     <span class="muted small" style="margin-left:8px;">${h.date}</span>
                     ${h.sections ? `<div class="muted small">Vocab ${h.sections.vocab} · Grammar ${h.sections.grammar} · Reading ${h.sections.reading}</div>` : ''}
                   </div>
-                  <div style="display:flex; align-items:center; gap:10px;">
+                  <div style="display:flex; align-items:center; gap:8px;">
+                    ${deltaBadge}
                     <strong>${h.score}/${h.total} (${pct}%)</strong>
                     <span class="badge ${h.passed ? 'badge-success' : 'badge-warning'}">${h.passed ? 'PASS' : 'RETRY'}</span>
                   </div>
@@ -393,7 +413,7 @@ window.NihongoViews.exam = (function () {
     container.innerHTML = `
       <section class="card score-hero" style="margin-bottom:20px;">
         <div class="score-circle ${r.passed ? '' : 'fail'}">
-          <span style="font-size:2.1rem; line-height:1;">${r.overallPct}%</span>
+          <span style="font-size:2.1rem; line-height:1;" data-countup="${r.overallPct}" data-suffix="%">${r.overallPct}%</span>
           <small style="font-size:0.8rem;">${r.score}/${r.total}</small>
         </div>
         <span class="badge ${r.passed ? 'badge-success' : 'badge-warning'}" style="font-size:0.85rem; padding:5px 14px;">
@@ -401,6 +421,7 @@ window.NihongoViews.exam = (function () {
         </span>
         <h2 style="margin:12px 0 6px;">${s.mode} — Score Report</h2>
         <p class="muted small" style="max-width:540px; margin:0 auto 18px;">
+          ${r.xpEarned ? `<strong>+${r.xpEarned} XP earned.</strong> ` : ''}
           ${r.passed
             ? 'Great work! You cleared both the overall threshold and every individual section minimum.'
             : !r.sectionalOk
@@ -426,7 +447,8 @@ window.NihongoViews.exam = (function () {
         </div>
 
         <div class="btn-row" style="justify-content:center;">
-          <button class="btn btn-primary" id="retake-exam-btn">Retake Exam</button>
+          ${s.questions.length - r.score > 0 ? `<button class="btn btn-primary" id="practice-exam-misses">🎯 Fix Missed Questions (${s.questions.length - r.score})</button>` : ''}
+          <button class="btn ${s.questions.length - r.score > 0 ? 'btn-secondary' : 'btn-primary'}" id="retake-exam-btn">Retake Exam</button>
           <button class="btn btn-secondary" id="back-exam-lobby">Back to Exam Hall</button>
         </div>
       </section>
@@ -486,6 +508,19 @@ window.NihongoViews.exam = (function () {
       </section>
     `;
 
+    window.NihongoFx.animateIn(container);
+    if (r.passed && !r.celebrated) {
+      r.celebrated = true;
+      window.NihongoFx.confettiFrom(container.querySelector('.score-circle'), { count: 120, spread: 1.2 });
+    }
+
+    const fixExamBtn = container.querySelector('#practice-exam-misses');
+    if (fixExamBtn) {
+      fixExamBtn.addEventListener('click', () => {
+        session = null;
+        window.NihongoApp.navigate('drills', { drillType: 'mistakes' });
+      });
+    }
     container.querySelector('#retake-exam-btn').addEventListener('click', () => {
       startExam(s.modeKey, s.timed, container);
     });

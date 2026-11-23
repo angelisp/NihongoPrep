@@ -1,7 +1,7 @@
 /* ==========================================================================
    NihongoPrep Service Worker — Offline-First PWA Asset Cache
    ========================================================================== */
-const CACHE_NAME = 'nihongoprep-n5-v2';
+const CACHE_NAME = 'nihongoprep-n5-v5';
 
 const CORE_ASSETS = [
   './',
@@ -19,6 +19,7 @@ const CORE_ASSETS = [
   './js/data/exam.js',
   './js/store.js',
   './js/audio.js',
+  './js/fx.js',
   './js/components/dashboard.js',
   './js/components/vocabView.js',
   './js/components/grammarView.js',

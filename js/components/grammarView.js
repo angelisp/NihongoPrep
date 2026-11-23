@@ -1,5 +1,5 @@
 /* ==========================================================================
-   Grammar Guide & Interactive Quick Checks (文法)
+   Grammar Curriculum Path & Interactive Quick Checks (文法)
    ========================================================================== */
 window.NihongoViews = window.NihongoViews || {};
 
@@ -10,6 +10,14 @@ window.NihongoViews.grammar = (function () {
     selectedId: 'g01',
     checkAnswers: {} // { [grammarId]: chosenOptionIndex }
   };
+
+  function renderStars(count) {
+    let out = '';
+    for (let i = 1; i <= 3; i++) {
+      out += `<span class="star-pip ${i <= count ? 'on' : ''}">${i <= count ? '★' : '☆'}</span>`;
+    }
+    return `<span class="star-rating" title="${count}/3 mastery stars">${out}</span>`;
+  }
 
   function render(container, opts) {
     const allGrammar = window.NihongoData.grammar;
@@ -37,14 +45,32 @@ window.NihongoViews.grammar = (function () {
     let active = filtered.find(g => g.id === state.selectedId) || filtered[0] || allGrammar[0];
     if (active) state.selectedId = active.id;
 
+    // First pattern with < 2 stars is softly recommended as "Next"
+    const recommendedNext = allGrammar.find(g => store.getGrammarStars(g.id) < 2);
+
     const isStudied = active && studied.includes(active.id);
+    const activeStars = active ? store.getGrammarStars(active.id) : 0;
+    const xpClaimed = active && Boolean(store.getState().xpAwarded[`grammar:${active.id}`]);
     const chosenCheck = active ? state.checkAnswers[active.id] : undefined;
+
+    // Group filtered items into curriculum units by category
+    const unitGroups = [];
+    const groupMap = {};
+    filtered.forEach(g => {
+      if (!groupMap[g.category]) {
+        const allInCat = allGrammar.filter(item => item.category === g.category);
+        const doneInCat = allInCat.filter(item => studied.includes(item.id)).length;
+        groupMap[g.category] = { category: g.category, total: allInCat.length, done: doneInCat, items: [] };
+        unitGroups.push(groupMap[g.category]);
+      }
+      groupMap[g.category].items.push(g);
+    });
 
     container.innerHTML = `
       <div class="section-header">
         <div>
           <h2>Grammar Curriculum · 文法</h2>
-          <p>${studied.length} of ${allGrammar.length} core JLPT N5 patterns studied. Complete the Quick Check on each point to test yourself.</p>
+          <p>${studied.length} of ${allGrammar.length} core JLPT N5 patterns studied. Pass Quick Checks to earn up to ★★★ mastery.</p>
         </div>
         <button class="btn btn-secondary btn-sm" id="goto-particle-drill">⚡ Practice Particle Drill</button>
       </div>
@@ -57,29 +83,51 @@ window.NihongoViews.grammar = (function () {
           placeholder="Search grammar pattern, particle, or meaning…"
           value="${state.search.replace(/"/g, '&quot;')}"
         />
-        <div class="chip-row">
-          ${categories.map(cat => `
-            <button class="chip ${state.category === cat ? 'active' : ''}" data-gcat="${cat}">${cat}</button>
-          `).join('')}
+        <div class="chip-row scroll-row">
+          ${categories.map(cat => {
+            if (cat === 'All') {
+              return `<button class="chip ${state.category === cat ? 'active' : ''}" data-gcat="${cat}">All (${studied.length}/${allGrammar.length})</button>`;
+            }
+            const totalCat = allGrammar.filter(g => g.category === cat).length;
+            const doneCat = allGrammar.filter(g => g.category === cat && studied.includes(g.id)).length;
+            return `<button class="chip ${state.category === cat ? 'active' : ''}" data-gcat="${cat}">${cat} ${doneCat}/${totalCat}</button>`;
+          }).join('')}
         </div>
       </div>
 
       <div class="grammar-layout">
-        <!-- Left Pattern List -->
-        <div class="grammar-list" role="listbox" aria-label="Grammar points">
+        <!-- Left Curriculum Unit Path -->
+        <div class="grammar-list" role="listbox" aria-label="Grammar curriculum units">
           ${filtered.length === 0 ? `
             <div class="card small muted">No grammar points match "${state.search}".</div>
-          ` : filtered.map(g => {
-            const done = studied.includes(g.id);
+          ` : unitGroups.map((unit, uIdx) => {
+            const unitPct = Math.round((unit.done / unit.total) * 100);
             return `
-              <button class="grammar-list-item ${active && g.id === active.id ? 'active' : ''}" data-gid="${g.id}">
-                <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
-                  <span class="badge badge-neutral">${g.category}</span>
-                  ${done ? '<span class="badge badge-success">✓ Studied</span>' : ''}
+              <div class="curriculum-unit">
+                <div class="curriculum-unit-head">
+                  <strong>Unit ${uIdx + 1} · ${unit.category}</strong>
+                  <span class="small muted">${unit.done}/${unit.total}</span>
                 </div>
-                <div class="grammar-pattern-title jp-text">${g.pattern}</div>
-                <div class="muted small">${g.meaning}</div>
-              </button>
+                <div class="progress-track" style="height:4px; margin-bottom:8px;">
+                  <div class="progress-fill indigo" data-noanim style="width:${unitPct}%"></div>
+                </div>
+                <div class="curriculum-unit-nodes">
+                  ${unit.items.map(g => {
+                    const stars = store.getGrammarStars(g.id);
+                    const isNext = recommendedNext && recommendedNext.id === g.id;
+                    return `
+                      <button class="grammar-list-item ${active && g.id === active.id ? 'active' : ''} ${isNext ? 'is-recommended' : ''}" data-gid="${g.id}">
+                        <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+                          ${renderStars(stars)}
+                          ${isNext ? '<span class="badge badge-warning">Next</span>' : ''}
+                        </div>
+                        <div class="grammar-pattern-title jp-text">${g.pattern}</div>
+                        <div class="muted small">${g.meaning}</div>
+                      </button>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
             `;
           }).join('')}
         </div>
@@ -89,16 +137,19 @@ window.NihongoViews.grammar = (function () {
           <article class="card grammar-detail-panel">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
               <div>
-                <span class="badge badge-noun">${active.category}</span>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <span class="badge badge-noun">${active.category}</span>
+                  ${renderStars(activeStars)}
+                </div>
                 <h3 class="jp-text" style="font-size:1.55rem; margin:8px 0 2px;">${active.pattern}</h3>
                 <div style="font-size:1.05rem; font-weight:700; color:var(--text-secondary);">${active.meaning}</div>
               </div>
               <button class="btn ${isStudied ? 'btn-secondary' : 'btn-primary'} btn-sm" id="toggle-grammar-studied">
-                ${isStudied ? '✓ Studied (Undo)' : 'Mark as Studied (+15 XP)'}
+                ${isStudied ? '✓ Studied (Undo)' : xpClaimed ? 'Mark as Studied' : 'Mark as Studied (+15 XP)'}
               </button>
             </div>
 
-            <div class="formula-box jp-text" style="white-space: pre-line;">${active.structure}</div>
+            <div class="formula-box jp-text" id="grammar-formula-box" style="white-space: pre-line;">${active.structure}</div>
 
             <p style="margin: 12px 0;">${active.explanation}</p>
 
@@ -123,8 +174,8 @@ window.NihongoViews.grammar = (function () {
             ${active.quickCheck ? `
               <div class="quick-check-box">
                 <div style="display:flex; justify-content:space-between; align-items:center;">
-                  <h4 style="margin:0;">⚡ Quick Check</h4>
-                  ${chosenCheck !== undefined ? `<button class="btn btn-xs btn-ghost" id="reset-quick-check">Try again</button>` : ''}
+                  <h4 style="margin:0;">⚡ Quick Check ${activeStars >= 3 ? '<span class="badge badge-success" style="margin-left:6px;">★★★ Mastered</span>' : ''}</h4>
+                  ${chosenCheck !== undefined ? `<button class="btn btn-xs btn-ghost" id="reset-quick-check">Practice again</button>` : ''}
                 </div>
                 <p class="jp-text" style="font-size:1.08rem; font-weight:600; margin:10px 0 12px;">${active.quickCheck.prompt}</p>
                 <div class="option-list">
@@ -143,8 +194,8 @@ window.NihongoViews.grammar = (function () {
                   }).join('')}
                 </div>
                 ${chosenCheck !== undefined ? `
-                  <div class="feedback-banner ${chosenCheck === active.quickCheck.answerIndex ? 'correct' : 'incorrect'}">
-                    <strong>${chosenCheck === active.quickCheck.answerIndex ? '✓ Correct! 正解！' : '✕ Not quite!'}</strong>
+                  <div class="feedback-banner ${chosenCheck === active.quickCheck.answerIndex ? 'correct' : 'incorrect'} feedback-enter">
+                    <strong>${chosenCheck === active.quickCheck.answerIndex ? '✓ Correct! 正解！' : '✕ Not quite — saved to Mistake Bank'}</strong>
                     ${active.quickCheck.explanation}
                   </div>
                 ` : ''}
@@ -187,8 +238,11 @@ window.NihongoViews.grammar = (function () {
     const toggleStudiedBtn = container.querySelector('#toggle-grammar-studied');
     if (toggleStudiedBtn && active) {
       toggleStudiedBtn.addEventListener('click', () => {
+        const hadXp = Boolean(store.getState().xpAwarded[`grammar:${active.id}`]);
         const nowStudied = store.toggleStudiedGrammar(active.id);
-        window.NihongoApp.toast(nowStudied ? 'Grammar point marked studied! (+15 XP)' : 'Removed studied mark');
+        window.NihongoApp.toast(nowStudied
+          ? (hadXp ? 'Grammar point marked studied ✓' : 'Grammar point marked studied! (+15 XP)')
+          : 'Removed studied mark');
         render(container);
       });
     }
@@ -200,12 +254,27 @@ window.NihongoViews.grammar = (function () {
     container.querySelectorAll('[data-qcheck]').forEach(btn => {
       btn.addEventListener('click', () => {
         const idx = Number(btn.dataset.qcheck);
+        const isCorrect = idx === active.quickCheck.answerIndex;
         state.checkAnswers[active.id] = idx;
-        if (idx === active.quickCheck.answerIndex && !studied.includes(active.id)) {
-          store.toggleStudiedGrammar(active.id);
-          window.NihongoApp.toast('Correct! Marked pattern as studied (+15 XP)');
+        if (isCorrect) {
+          store.clearMistake(`grammar:${active.id}`);
+          const prevStars = store.getGrammarStars(active.id);
+          const nextStars = store.recordGrammarCheck(active.id, true);
+          if (nextStars > prevStars) {
+            window.NihongoApp.toast(nextStars === 3
+              ? `★★★ Mastered「${active.pattern}」!`
+              : `★★ Quick Check passed!`);
+          }
+        } else {
+          store.recordMistake('grammar', active.id, `Grammar: ${active.pattern}`);
         }
         render(container);
+        const picked = container.querySelector(`[data-qcheck="${idx}"]`);
+        if (picked) window.NihongoFx.pulse(picked, isCorrect ? 'fx-pop' : 'fx-shake');
+        if (isCorrect) {
+          const formulaEl = container.querySelector('#grammar-formula-box');
+          if (formulaEl) window.NihongoFx.pulse(formulaEl, 'formula-highlight');
+        }
       });
     });
 

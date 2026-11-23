@@ -63,6 +63,7 @@
           <span class="nav-icon" aria-hidden="true">⚡</span>
           <span class="nav-label">Practice Drills</span>
           <span class="nav-jp jp-text">練習</span>
+          <span class="nav-badge nav-badge-warn" id="nav-mistake-badge" hidden>0</span>
         </button>
         <button class="nav-item" data-route="exam">
           <span class="nav-icon" aria-hidden="true">📝</span>
@@ -72,6 +73,22 @@
       </nav>
 
       <div class="sidebar-footer">
+        <div class="sidebar-level-card" id="sidebar-level-card">
+          <div class="level-row">
+            <div class="level-badge" id="sidebar-level-badge" title="Your level"><small>Lv</small><span id="sidebar-level-num">1</span></div>
+            <div class="level-meta">
+              <strong id="sidebar-rank" class="jp-text">入門 · Newcomer</strong>
+              <span id="sidebar-level-next">40 XP to Lv 2</span>
+            </div>
+            <div class="goal-ring" id="sidebar-goal-ring" style="--pct: 0" title="Daily goal">
+              <span id="sidebar-goal-text">0%</span>
+            </div>
+          </div>
+          <div class="progress-track level-track">
+            <div class="progress-fill" id="sidebar-level-bar" data-noanim style="width: 0%"></div>
+          </div>
+          <div class="sidebar-goal-caption" id="sidebar-goal-caption">🎯 0 / 50 XP today</div>
+        </div>
         <div class="sidebar-progress-card">
           <div class="sidebar-progress-head">
             <span>N5 Readiness</span>
@@ -101,6 +118,10 @@
         </div>
 
         <div class="topbar-controls">
+          <div class="mobile-level-chip" id="mobile-level-chip" title="Level &amp; daily goal">
+            <span class="goal-ring mini" id="mobile-goal-ring" style="--pct: 0"></span>
+            <strong>Lv <span id="mobile-level-num">1</span></strong>
+          </div>
           <button class="btn btn-primary btn-xs" id="install-pwa-btn" hidden title="Install NihongoPrep as an offline app">
             📲 Install
           </button>
@@ -204,6 +225,22 @@
         </div>
 
         <div class="setting-group">
+          <h3>Daily Goal</h3>
+          <div class="setting-row">
+            <div>
+              <strong>XP target per day 🎯</strong>
+              <p class="muted small">A 20-card flashcard session earns roughly 150 XP</p>
+            </div>
+            <select id="modal-daily-goal" class="goal-select">
+              <option value="30">30 XP · Casual</option>
+              <option value="50">50 XP · Regular</option>
+              <option value="100">100 XP · Serious</option>
+              <option value="200">200 XP · Intense</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="setting-group">
           <h3>Audio Voice Test</h3>
           <div class="setting-row">
             <div>
@@ -254,6 +291,7 @@
   <script defer src="js/data/exam.js"></script>
   <script defer src="js/store.js"></script>
   <script defer src="js/audio.js"></script>
+  <script defer src="js/fx.js"></script>
   <script defer src="js/components/dashboard.js"></script>
   <script defer src="js/components/vocabView.js"></script>
   <script defer src="js/components/grammarView.js"></script>

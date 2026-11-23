@@ -12,13 +12,35 @@ window.NihongoViews.listening = (function () {
     isPlaying: false,
     activeLineIdx: -1,
     answers: {},   // { [id]: chosenIndex }
-    showScript: {} // { [id]: boolean }
+    showScript: {}, // { [id]: boolean }
+    usedHint: {},  // { [id]: boolean }
+    usedRetry: {}, // { [id]: boolean }
+    autoCountdown: 0
   };
 
+  let autoTimer = null;
+
+  function cancelAutoAdvance() {
+    if (autoTimer) {
+      clearInterval(autoTimer);
+      autoTimer = null;
+    }
+    state.autoCountdown = 0;
+  }
+
   function cleanup() {
+    cancelAutoAdvance();
     window.NihongoAudio.stop();
     state.isPlaying = false;
     state.activeLineIdx = -1;
+  }
+
+  function renderStars(count) {
+    let out = '';
+    for (let i = 1; i <= 3; i++) {
+      out += `<span class="star-pip ${i <= count ? 'on' : ''}">${i <= count ? '★' : '☆'}</span>`;
+    }
+    return `<span class="star-rating" title="${count}/3 listening stars">${out}</span>`;
   }
 
   function render(container) {
@@ -72,12 +94,15 @@ window.NihongoViews.listening = (function () {
         <!-- Left Dialogue Tracklist -->
         <div class="grammar-list" role="listbox" aria-label="Listening tracks">
           ${filtered.map((item, idx) => {
-            const done = completed.includes(item.id);
+            const m = store.getListeningMastery(item.id);
             return `
               <button class="grammar-list-item ${active && item.id === active.id ? 'active' : ''}" data-lid="${item.id}">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
                   <span class="badge badge-neutral">Track ${idx + 1}</span>
-                  ${done ? '<span class="badge badge-success">✓ Done</span>' : ''}
+                  <div style="display:flex; align-items:center; gap:4px;">
+                    ${m.nativeSpeed ? '<span class="badge badge-indigo" title="Cleared at 1.0× natural speed">1.0×</span>' : ''}
+                    ${m.stars > 0 ? renderStars(m.stars) : ''}
+                  </div>
                 </div>
                 <div class="grammar-pattern-title">${item.title}</div>
                 <div class="muted small">${item.mondaiLabel}</div>
@@ -87,11 +112,17 @@ window.NihongoViews.listening = (function () {
         </div>
 
         <!-- Right Audio Studio & Question -->
-        ${active ? `
+        ${active ? (() => {
+          const activeM = store.getListeningMastery(active.id);
+          return `
           <article class="card grammar-detail-panel">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; flex-wrap:wrap;">
               <div>
-                <span class="badge badge-noun">${active.mondaiLabel}</span>
+                <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                  <span class="badge badge-noun">${active.mondaiLabel}</span>
+                  ${activeM.stars > 0 ? renderStars(activeM.stars) : ''}
+                  ${activeM.nativeSpeed ? '<span class="badge badge-indigo">⚡ 1.0× Native</span>' : ''}
+                </div>
                 <h3 style="margin:8px 0 4px; font-size:1.3rem;">${active.title}</h3>
                 <p class="muted small" style="margin:0;">${active.situation}</p>
               </div>
@@ -149,10 +180,16 @@ window.NihongoViews.listening = (function () {
             </div>
 
             ${answered ? `
-              <div class="feedback-banner ${chosen === active.answerIndex ? 'correct' : 'incorrect'}">
+              <div class="feedback-banner ${chosen === active.answerIndex ? 'correct' : 'incorrect'} feedback-enter">
                 <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:4px;">
                   <strong>${chosen === active.answerIndex ? '✓ Correct! 正解！' : '✕ Not quite — listen again with the script below.'}</strong>
-                  <button class="btn btn-xs btn-secondary" id="retry-listening-btn">Try Again</button>
+                  <div style="display:flex; align-items:center; gap:6px;">
+                    ${state.autoCountdown > 0 ? `
+                      <span class="badge badge-neutral" id="auto-adv-label">Next in ${state.autoCountdown}s…</span>
+                      <button class="btn btn-xs btn-ghost" id="cancel-auto-btn">Stay</button>
+                    ` : ''}
+                    <button class="btn btn-xs btn-secondary" id="retry-listening-btn">Try Again</button>
+                  </div>
                 </div>
                 <div>${active.explanation}</div>
               </div>
@@ -189,7 +226,7 @@ window.NihongoViews.listening = (function () {
               `}
             </div>
           </article>
-        ` : ''}
+        `; })() : ''}
       </div>
     `;
 
@@ -279,18 +316,55 @@ window.NihongoViews.listening = (function () {
       btn.addEventListener('click', () => {
         if (!active || answered) return;
         const idx = Number(btn.dataset.lopt);
+        const isCorrect = idx === active.answerIndex;
         state.answers[active.id] = idx;
-        if (idx === active.answerIndex) {
-          const isNew = store.markListeningCompleted(active.id);
-          if (isNew) window.NihongoApp.toast('Listening track completed! (+20 XP)');
+        if (isCorrect) {
+          const stars = Math.max(1, 3 - (state.usedHint[active.id] ? 1 : 0) - (state.usedRetry[active.id] ? 1 : 0));
+          const nativeSpeed = state.speed >= 1.0;
+          const res = store.markListeningCompleted(active.id, { stars, nativeSpeed });
+          if (res.isNew) {
+            window.NihongoApp.toast(`Listening track completed! ${'★'.repeat(stars)} (+20 XP)`);
+          } else if (res.upgradedNative) {
+            window.NihongoApp.toast('⚡ Native 1.0× speed badge unlocked! (+10 XP)');
+          }
+
+          // Start gentle 3s auto-advance if there's another unfinished track in this filter
+          const nextUnfinished = filtered.find(item => item.id !== active.id && !store.getState().completedListening.includes(item.id));
+          if (nextUnfinished) {
+            cancelAutoAdvance();
+            state.autoCountdown = 3;
+            autoTimer = setInterval(() => {
+              state.autoCountdown -= 1;
+              const lbl = document.getElementById('auto-adv-label');
+              if (state.autoCountdown <= 0) {
+                cancelAutoAdvance();
+                state.selectedId = nextUnfinished.id;
+                render(container);
+              } else if (lbl) {
+                lbl.textContent = `Next in ${state.autoCountdown}s…`;
+              }
+            }, 1000);
+          }
         }
         render(container);
+        const picked = container.querySelector(`[data-lopt="${idx}"]`);
+        if (picked) window.NihongoFx.pulse(picked, isCorrect ? 'fx-pop' : 'fx-shake');
       });
     });
+
+    const cancelAutoBtn = container.querySelector('#cancel-auto-btn');
+    if (cancelAutoBtn) {
+      cancelAutoBtn.addEventListener('click', () => {
+        cancelAutoAdvance();
+        render(container);
+      });
+    }
 
     const retryBtn = container.querySelector('#retry-listening-btn');
     if (retryBtn && active) {
       retryBtn.addEventListener('click', () => {
+        cancelAutoAdvance();
+        state.usedRetry[active.id] = true;
         delete state.answers[active.id];
         state.showScript[active.id] = false;
         render(container);
@@ -300,7 +374,9 @@ window.NihongoViews.listening = (function () {
     const toggleScriptBtn = container.querySelector('#toggle-script-btn');
     if (toggleScriptBtn && active) {
       toggleScriptBtn.addEventListener('click', () => {
-        state.showScript[active.id] = !state.showScript[active.id];
+        const next = !state.showScript[active.id];
+        state.showScript[active.id] = next;
+        if (next && !answered) state.usedHint[active.id] = true;
         render(container);
       });
     }

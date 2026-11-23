@@ -38,10 +38,11 @@ window.NihongoViews.vocab = (function () {
     queue: [],
     currentIndex: 0,
     flipped: false,
-    sessionStats: { reviewed: 0, goodOrEasy: 0 }
+    sessionStats: { reviewed: 0, goodOrEasy: 0, xp: 0, combo: 0, bestCombo: 0, mastered: [] }
   };
 
   let keyHandler = null;
+  let animating = false;
 
   function renderKanjiDisplay(word) {
     if (word.kanji === word.kana) return word.kana;
@@ -80,7 +81,7 @@ window.NihongoViews.vocab = (function () {
     viewState.queue = buildQueue(viewState.deckFilter);
     viewState.currentIndex = 0;
     viewState.flipped = false;
-    viewState.sessionStats = { reviewed: 0, goodOrEasy: 0 };
+    viewState.sessionStats = { reviewed: 0, goodOrEasy: 0, xp: 0, combo: 0, bestCombo: 0, mastered: [] };
   }
 
   function detachKeys() {
@@ -307,12 +308,11 @@ window.NihongoViews.vocab = (function () {
         const id = btn.dataset.quickMaster;
         const st = store.getVocabStatus(id);
         if (st === 'mastered') {
-          store.rateVocab(id, 1);
-          window.NihongoApp.toast('Reset to Learning queue');
+          store.quickMarkVocab(id, false);
+          window.NihongoApp.toast('Sent back to the Learning queue');
         } else {
-          store.rateVocab(id, 4);
-          store.rateVocab(id, 4);
-          window.NihongoApp.toast('Marked as Mastered! (+16 XP)');
+          store.quickMarkVocab(id, true);
+          window.NihongoApp.toast('Marked as Mastered ✓');
         }
         renderDirectory(subEl);
       });
@@ -357,28 +357,45 @@ window.NihongoViews.vocab = (function () {
             <button class="btn btn-primary" data-deck="due">Load Smart Due Queue</button>
           </div>
         ` : finished ? `
-          <div class="card" style="text-align:center; padding:40px;">
+          <div class="card session-summary" style="text-align:center; padding:40px;">
             <div style="font-size:2.6rem; margin-bottom:8px;">🎉</div>
             <h3 style="margin:0 0 6px;">Session Complete! お疲れさまでした！</h3>
             <p class="muted">
               You reviewed <strong>${viewState.sessionStats.reviewed}</strong> cards
               (${viewState.sessionStats.goodOrEasy} rated Good or Easy).
             </p>
+            <div class="summary-stats">
+              <div><strong>+<span data-countup="${viewState.sessionStats.xp}">${viewState.sessionStats.xp}</span></strong><small>XP earned</small></div>
+              <div><strong>${viewState.sessionStats.mastered.length}</strong><small>newly mastered</small></div>
+              <div><strong>🔥 ${viewState.sessionStats.bestCombo}</strong><small>best combo</small></div>
+            </div>
+            ${viewState.sessionStats.mastered.length ? `
+              <div class="mastered-chips">
+                ${viewState.sessionStats.mastered.map((w, i) => `
+                  <span class="badge badge-success jp-text" style="animation-delay:${i * 90}ms">✨ ${w.kanji} · ${w.meaning}</span>
+                `).join('')}
+              </div>
+            ` : ''}
             <div class="btn-row" style="justify-content:center; margin-top:18px;">
               <button class="btn btn-primary" id="restart-flashcards">Study Another Set</button>
               <button class="btn btn-secondary" id="goto-drills-after-fc">Try a Quick Drill ⚡</button>
             </div>
           </div>
         ` : `
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:0.84rem;">
-            <span class="muted">Card <strong>${viewState.currentIndex + 1}</strong> of ${viewState.queue.length}</span>
-            <span class="muted">Shortcuts: <kbd>Space</kbd> Flip · <kbd>1–4</kbd> Rate · <kbd>A</kbd> Audio</span>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; font-size:0.84rem; gap:8px; flex-wrap:wrap;">
+            <span class="muted">
+              Card <strong>${viewState.currentIndex + 1}</strong> of ${viewState.queue.length}
+              ${viewState.sessionStats.combo >= 2 ? `<span class="combo-pill">🔥 ×${viewState.sessionStats.combo}</span>` : ''}
+            </span>
+            <span class="muted fc-shortcuts">Shortcuts: <kbd>Space</kbd> Flip · <kbd>1–4</kbd> Rate · <kbd>A</kbd> Audio</span>
           </div>
           <div class="progress-track" style="margin-bottom:16px;">
-            <div class="progress-fill" style="width:${Math.round((viewState.currentIndex / viewState.queue.length) * 100)}%"></div>
+            <div class="progress-fill"
+                 data-from="${Math.round((Math.max(0, viewState.currentIndex - 1) / viewState.queue.length) * 100)}%"
+                 style="width:${Math.round((viewState.currentIndex / viewState.queue.length) * 100)}%"></div>
           </div>
 
-          <div class="flashcard-scene">
+          <div class="flashcard-scene card-enter" id="flashcard-scene">
             <div class="flashcard-inner ${viewState.flipped ? 'is-flipped' : ''}" id="flashcard-card">
               <!-- Front Face -->
               <div class="flashcard-face flashcard-front">
@@ -421,25 +438,28 @@ window.NihongoViews.vocab = (function () {
             </div>
           </div>
 
-          ${viewState.flipped ? `
-            <div class="srs-rating-grid">
-              <button class="srs-btn again" data-rate="1">1 · Again <small>10 min</small></button>
-              <button class="srs-btn hard" data-rate="2">2 · Hard <small>1 day</small></button>
-              <button class="srs-btn good" data-rate="3">3 · Good <small>1–4 days</small></button>
-              <button class="srs-btn easy" data-rate="4">4 · Easy <small>3+ days</small></button>
-            </div>
-          ` : `
-            <div style="text-align:center;">
-              <button class="btn btn-primary" id="flip-card-btn" style="min-width:220px;">Show Answer (Space)</button>
-            </div>
-          `}
+          <div class="srs-rating-grid" id="srs-rating-grid" ${viewState.flipped ? '' : 'hidden'}>
+            <button class="srs-btn again" data-rate="1">1 · Again <small>${store.previewInterval(currentWord.id, 1)}</small></button>
+            <button class="srs-btn hard" data-rate="2">2 · Hard <small>${store.previewInterval(currentWord.id, 2)}</small></button>
+            <button class="srs-btn good" data-rate="3">3 · Good <small>${store.previewInterval(currentWord.id, 3)}</small></button>
+            <button class="srs-btn easy" data-rate="4">4 · Easy <small>${store.previewInterval(currentWord.id, 4)}</small></button>
+          </div>
+          <div style="text-align:center;" id="flip-btn-wrap" ${viewState.flipped ? 'hidden' : ''}>
+            <button class="btn btn-primary" id="flip-card-btn" style="min-width:220px;">Show Answer (Space)</button>
+          </div>
         `}
       </div>
     `;
 
+    window.NihongoFx.animateIn(subEl);
+    if (finished && viewState.queue.length > 0 && viewState.sessionStats.reviewed > 0) {
+      window.NihongoFx.confettiFrom(subEl.querySelector('.session-summary'), { count: 80, spread: 0.9 });
+    }
+
     // Bind deck selector
     subEl.querySelectorAll('[data-deck]').forEach(btn => {
       btn.addEventListener('click', () => {
+        animating = false;
         startSession(btn.dataset.deck);
         renderFlashcards(subEl, rootContainer);
       });
@@ -448,6 +468,7 @@ window.NihongoViews.vocab = (function () {
     const dirBtn = subEl.querySelector('#toggle-card-dir');
     if (dirBtn) {
       dirBtn.addEventListener('click', () => {
+        animating = false;
         viewState.direction = viewState.direction === 'jp-en' ? 'en-jp' : 'jp-en';
         viewState.flipped = false;
         renderFlashcards(subEl, rootContainer);
@@ -467,40 +488,93 @@ window.NihongoViews.vocab = (function () {
       gotoDrillsBtn.addEventListener('click', () => window.NihongoApp.navigate('drills'));
     }
 
+    const sceneEl = subEl.querySelector('#flashcard-scene');
+    const cardEl = subEl.querySelector('#flashcard-card');
+    const ratingGrid = subEl.querySelector('#srs-rating-grid');
+    const flipWrap = subEl.querySelector('#flip-btn-wrap');
+
     function doFlip() {
-      if (!currentWord) return;
+      if (!currentWord || animating || !cardEl) return;
       viewState.flipped = !viewState.flipped;
+      // Mutate existing DOM so the 3D CSS rotateY transition plays smoothly.
+      cardEl.classList.toggle('is-flipped', viewState.flipped);
+      if (ratingGrid) {
+        ratingGrid.hidden = !viewState.flipped;
+        if (viewState.flipped) {
+          ratingGrid.classList.remove('revealed');
+          void ratingGrid.offsetWidth;
+          ratingGrid.classList.add('revealed');
+        }
+      }
+      if (flipWrap) flipWrap.hidden = viewState.flipped;
       if (viewState.flipped && store.getState().prefs.autoPlayAudio) {
         window.NihongoAudio.speak(currentWord.kana);
       }
-      renderFlashcards(subEl, rootContainer);
     }
 
     function doRate(rating) {
-      if (!currentWord) return;
-      store.rateVocab(currentWord.id, rating);
+      if (!currentWord || animating) return;
+      animating = true;
+      const result = store.rateVocab(currentWord.id, rating);
       viewState.sessionStats.reviewed += 1;
-      if (rating >= 3) viewState.sessionStats.goodOrEasy += 1;
+      viewState.sessionStats.xp += result.xp;
+      if (rating >= 3) {
+        viewState.sessionStats.goodOrEasy += 1;
+        viewState.sessionStats.combo += 1;
+        if (viewState.sessionStats.combo > viewState.sessionStats.bestCombo) {
+          viewState.sessionStats.bestCombo = viewState.sessionStats.combo;
+        }
+      } else {
+        viewState.sessionStats.combo = 0;
+      }
+      if (result.mastered) {
+        viewState.sessionStats.mastered.push(currentWord);
+      }
       if (rating === 1) {
         // Re-insert near end of current session for extra practice
         viewState.queue.push(currentWord);
       }
-      viewState.currentIndex += 1;
-      viewState.flipped = false;
-      renderFlashcards(subEl, rootContainer);
+
+      const advance = () => {
+        animating = false;
+        viewState.currentIndex += 1;
+        viewState.flipped = false;
+        renderFlashcards(subEl, rootContainer);
+      };
+
+      if (sceneEl && !window.NihongoFx.reducedMotion()) {
+        sceneEl.classList.remove('card-enter');
+        sceneEl.classList.add(rating === 1 ? 'card-fly-left' : 'card-fly-right');
+        setTimeout(advance, 230);
+      } else {
+        advance();
+      }
     }
 
-    const cardEl = subEl.querySelector('#flashcard-card');
-    if (cardEl) {
+    if (cardEl && sceneEl) {
       let touchStartX = 0;
       let touchStartY = 0;
+      let dragging = false;
       let swiped = false;
 
       cardEl.addEventListener('touchstart', e => {
         if (!e.touches || !e.touches[0]) return;
         touchStartX = e.touches[0].clientX;
         touchStartY = e.touches[0].clientY;
+        dragging = false;
         swiped = false;
+      }, { passive: true });
+
+      cardEl.addEventListener('touchmove', e => {
+        if (!viewState.flipped || !e.touches || !e.touches[0] || animating) return;
+        const dx = e.touches[0].clientX - touchStartX;
+        const dy = e.touches[0].clientY - touchStartY;
+        if (Math.abs(dx) > 14 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+          dragging = true;
+          sceneEl.style.transition = 'none';
+          sceneEl.style.transform = `translateX(${dx}px) rotate(${dx * 0.04}deg)`;
+          sceneEl.style.opacity = String(Math.max(0.45, 1 - Math.abs(dx) / 360));
+        }
       }, { passive: true });
 
       cardEl.addEventListener('touchend', e => {
@@ -509,6 +583,9 @@ window.NihongoViews.vocab = (function () {
         const dy = e.changedTouches[0].clientY - touchStartY;
         if (Math.abs(dx) > 65 && Math.abs(dx) > Math.abs(dy) * 1.4 && viewState.flipped) {
           swiped = true;
+          sceneEl.style.transition = '';
+          sceneEl.style.transform = '';
+          sceneEl.style.opacity = '';
           if (dx > 0) {
             window.NihongoApp.toast('Swiped right → Rated Good ✓');
             doRate(3);
@@ -516,7 +593,12 @@ window.NihongoViews.vocab = (function () {
             window.NihongoApp.toast('Swiped left → Again ↻');
             doRate(1);
           }
+        } else if (dragging) {
+          sceneEl.style.transition = 'transform 0.2s ease, opacity 0.2s ease';
+          sceneEl.style.transform = '';
+          sceneEl.style.opacity = '';
         }
+        dragging = false;
       }, { passive: true });
 
       cardEl.addEventListener('click', e => {
@@ -544,6 +626,7 @@ window.NihongoViews.vocab = (function () {
     detachKeys();
     if (currentWord) {
       keyHandler = function (e) {
+        if (window.NihongoFx.isOverlayOpen()) return;
         if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
         if (e.code === 'Space') {
           e.preventDefault();
